@@ -6,3 +6,20 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+dcc-rs = { version = "0.3", features = ["use-defmt"] }
+
+embedded-hal = "0.2"
+nb = "1"
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+defmt = "0.3"
+defmt-rtt = "0.3"
+# Panic behaviour, see https://crates.io/keywords/panic-impl for alternatives
+panic-halt = "0.2"
+
+[dependencies.stm32f1xx-hal]
+version = "0.9"
+features = ["stm32f103", "medium"] # replace the model of your microcontroller here
+
+[profile.release]
+debug = 2
