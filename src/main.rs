@@ -36,7 +36,7 @@ use cortex_m_rt::entry;
 use dcc_rs::{packets::*, DccInterruptHandler};
 
 // A type definition for the GPIO pin to be used for our LED
-type DccDirPin = gpioa::PA0<Output<PushPull>>;
+type DccDirPin = gpioa::PA6<Output<PushPull>>;
 
 // Make DCC thingy globally available
 static G_DCC: Mutex<RefCell<Option<DccInterruptHandler<DccDirPin>>>> =
@@ -108,7 +108,7 @@ fn main() -> ! {
     // let mut gpioc = dp.GPIOC.split();
 
     info!("a");
-    let dcc_pin = gpioa.pa0.into_push_pull_output(&mut gpioa.crl);
+    let dcc_pin = gpioa.pa6.into_push_pull_output(&mut gpioa.crl);
 
     let mut dcc = DccInterruptHandler::new(dcc_pin);
     let pkt = SpeedAndDirection::builder()
@@ -169,7 +169,7 @@ fn main() -> ! {
     // alternate between channels
     let mut channel_select = false;
 
-    let mut current = 0u16;
+    let mut current: u16;
     let mut speed1 = 0;
     let mut speed2 = 0;
 

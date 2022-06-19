@@ -1,3 +1,5 @@
 (fp_lib_table
   (lib (name "stm32f103c6t6-blue-pill")(type "KiCad")(uri "${KIPRJMOD}/stm32f103c6t6-blue-pill.pretty")(options "")(descr ""))
+  (lib (name "potentiometer")(type "KiCad")(uri "${KIPRJMOD}/potentiometer.pretty")(options "")(descr ""))
+  (lib (name "dp3t")(type "KiCad")(uri "${KIPRJMOD}/dp3t.pretty")(options "")(descr ""))
 )
