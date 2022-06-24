@@ -8,14 +8,15 @@ edition = "2021"
 [dependencies]
 dcc-rs = { version = "0.3", features = ["use-defmt"] }
 
-embedded-hal = "0.2"
-nb = "1"
 cortex-m = "0.7"
 cortex-m-rt = "0.7"
 defmt = "0.3"
 defmt-rtt = "0.3"
-# Panic behaviour, see https://crates.io/keywords/panic-impl for alternatives
+embedded-graphics = "0.7"
+embedded-hal = "0.2"
+nb = "1"
 panic-halt = "0.2"
+ssd1306 = "0.7"
 
 [dependencies.stm32f1xx-hal]
 version = "0.9"

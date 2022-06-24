@@ -13,8 +13,10 @@
 const LOCO1_ADDR: u8 = 2;
 const LOCO2_ADDR: u8 = 3;
 
-#[macro_use]
-extern crate defmt; // logging macros
+// #[macro_use]
+// extern crate defmt; // logging macros
+use core::fmt::Write;
+use defmt::info;
 
 use defmt_rtt as _;
 use panic_halt as _;
@@ -24,6 +26,7 @@ use stm32f1xx_hal as hal;
 use crate::hal::{
     adc,
     gpio::{gpioa, Output, PushPull},
+    i2c::{BlockingI2c, Mode},
     pac::{interrupt, Interrupt, Peripherals, TIM2},
     prelude::*,
     timer::{CounterUs, Event},
@@ -34,6 +37,18 @@ use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 
 use dcc_rs::{packets::*, DccInterruptHandler};
+
+// For in the graphics drawing utilities like the font
+// and the drawing routines:
+use embedded_graphics::{
+    mono_font::{ascii, MonoTextStyleBuilder},
+    pixelcolor::BinaryColor,
+    prelude::*,
+    text::{Baseline, Text},
+};
+
+// The display driver:
+use ssd1306::{prelude::*, Ssd1306};
 
 // A type definition for the GPIO pin to be used for our LED
 type DccDirPin = gpioa::PA6<Output<PushPull>>;
@@ -87,13 +102,13 @@ fn main() -> ! {
     info!("Start boot");
 
     let dp = Peripherals::take().unwrap();
-    let cp = cortex_m::Peripherals::take().unwrap();
+    let mut cp = cortex_m::Peripherals::take().unwrap();
 
     let rcc = dp.RCC.constrain();
     let mut flash = dp.FLASH.constrain();
 
     // Prepare the alternate function I/O registers
-    //let mut afio = dp.AFIO.constrain();
+    // let mut afio = dp.AFIO.constrain();
     // let clocks = rcc.cfgr.freeze(&mut flash.acr);
     let clocks = rcc
         .cfgr
@@ -143,6 +158,40 @@ fn main() -> ! {
     });
     info!("a");
 
+    info!("Init I²C");
+    cp.DWT.enable_cycle_counter();
+    let scl = gpiob.pb10.into_alternate_open_drain(&mut gpiob.crh);
+    let sda = gpiob.pb11.into_alternate_open_drain(&mut gpiob.crh);
+    info!("a");
+    let i2c = BlockingI2c::i2c2(
+        dp.I2C2,
+        (scl, sda),
+        Mode::Standard {
+            frequency: 400.kHz(),
+        },
+        clocks,
+        1000,
+        10,
+        1000,
+        1000,
+    );
+
+    info!("Init display");
+    // Create the I²C display interface:
+    let interface = ssd1306::I2CDisplayInterface::new(i2c);
+
+    // Create a driver instance and initialize:
+    let mut display =
+        Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+            .into_buffered_graphics_mode();
+    display.init().unwrap();
+
+    // Create a text style for drawing the font:
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&ascii::FONT_10X20)
+        .text_color(BinaryColor::On)
+        .build();
+
     //enable TIM2 interrupt
     // cortex_m::peripheral::NVIC::unpend(Interrupt::TIM2);
     unsafe {
@@ -155,7 +204,7 @@ fn main() -> ! {
 
     // LED to show when power is on
     // let mut led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
-    let mut led1 = gpiob.pb11.into_push_pull_output(&mut gpiob.crh);
+    let mut led1 = gpiob.pb13.into_push_pull_output(&mut gpiob.crh);
     let mut led2 = gpiob.pb12.into_push_pull_output(&mut gpiob.crh);
 
     // set up ADC
@@ -172,6 +221,11 @@ fn main() -> ! {
     let mut current: u16;
     let mut speed1 = 0;
     let mut speed2 = 0;
+    let mut dir1 = Direction::Forward;
+    let mut dir2 = Direction::Forward;
+
+    let mut address_display = FmtBuf::new();
+    let mut speed_display = FmtBuf::new();
 
     loop {
         // read the current
@@ -209,9 +263,11 @@ fn main() -> ! {
 
         let loco_addr = if channel_select {
             speed1 = speed;
+            dir1 = direction;
             LOCO1_ADDR
         } else {
             speed2 = speed;
+            dir2 = direction;
             LOCO2_ADDR
         };
 
@@ -237,6 +293,107 @@ fn main() -> ! {
             LOCO1_ADDR, speed1, LOCO2_ADDR, speed2, current
         );
 
-        delay.delay_ms(5u16);
+        address_display.reset();
+        write!(
+            &mut address_display,
+            "{:03} TRAIN {:03}",
+            LOCO1_ADDR, LOCO2_ADDR
+        )
+        .unwrap();
+
+        speed_display.reset();
+        {
+            let a = if speed1 == 0 {
+                ' '
+            } else if let Direction::Forward = dir1 {
+                '>'
+            } else {
+                '<'
+            };
+            let b = if speed2 == 0 {
+                ' '
+            } else if let Direction::Forward = dir2 {
+                '>'
+            } else {
+                '<'
+            };
+            write!(
+                &mut speed_display,
+                "{a}{speed1:02}{a}     {b}{speed2:02}{b}",
+            )
+        }
+        .unwrap();
+
+        // Display is 128 x 64
+        // Font is 10x20
+        //
+        // 000  loco  000
+        //
+        // 05 >      > 04
+        //
+        // Empty the display:
+        display.clear();
+
+        // Draw 3 lines of text:
+        Text::with_baseline(
+            address_display.as_str(),
+            Point::new(0, 25),
+            text_style,
+            Baseline::Alphabetic,
+        )
+        .draw(&mut display)
+        .unwrap();
+
+        Text::with_baseline(
+            speed_display.as_str(),
+            Point::new(0, 50),
+            text_style,
+            Baseline::Alphabetic,
+        )
+        .draw(&mut display)
+        .unwrap();
+
+        display.flush().unwrap();
+
+        delay.delay_ms(10u16);
+    }
+}
+
+/// This is a very simple buffer to pre format a short line of text
+/// limited arbitrarily to 64 bytes.
+struct FmtBuf {
+    buf: [u8; 64],
+    ptr: usize,
+}
+
+impl FmtBuf {
+    fn new() -> Self {
+        Self {
+            buf: [0; 64],
+            ptr: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.ptr = 0;
+    }
+
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.buf[0..self.ptr]).unwrap()
+    }
+}
+
+impl core::fmt::Write for FmtBuf {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let rest_len = self.buf.len() - self.ptr;
+        let len = if rest_len < s.len() {
+            rest_len
+        } else {
+            s.len()
+        };
+        self.buf[self.ptr..(self.ptr + len)]
+            .copy_from_slice(&s.as_bytes()[0..len]);
+        self.ptr += len;
+        Ok(())
     }
 }
