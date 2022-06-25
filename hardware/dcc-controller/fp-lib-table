@@ -3,4 +3,6 @@
   (lib (name "potentiometer")(type "KiCad")(uri "${KIPRJMOD}/potentiometer.pretty")(options "")(descr ""))
   (lib (name "dp3t")(type "KiCad")(uri "${KIPRJMOD}/dp3t.pretty")(options "")(descr ""))
   (lib (name "ssd1306-display")(type "KiCad")(uri "${KIPRJMOD}/ssd1306-display.pretty")(options "")(descr ""))
+  (lib (name "spdt-slide-switch")(type "KiCad")(uri "${KIPRJMOD}/spdt-slide-switch.pretty")(options "")(descr ""))
+  (lib (name "automotive-fuse-mount")(type "KiCad")(uri "${KIPRJMOD}/automotive-fuse-mount.pretty")(options "")(descr ""))
 )
