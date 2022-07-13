@@ -7,6 +7,25 @@
 //!
 //! This assumes that a LED is connected to pa5 (sck/d13) as is the case on most nucleo board.
 
+// Pinout:
+// POT_LEFT: PB0
+// POT_RIGHT: PB1
+// DIPSW_LEFT: PB15, PA8, PA9, PA10, PA11, PA12, PA15
+// DIPSW_RIGHT: PB3, PB4, PB5, PA6, PA5, PB8, PB9
+// SCL: PB6
+// SDA: PB7
+// LED_LEFT: PA1
+// LED_RIGHT: PA0
+// LED_PROG: PB12
+// LED_ALARM: PB13
+// BTN_STOP: PB14
+// BTN_PROG: PA4
+// SW_PROG_LEFT: PB10
+// SW_PROG_RIGHT: PB11
+// OUT_EN: PA2
+// OUT_DIR: PA3
+// CURRENT_SENSE: PA7
+
 #![no_main]
 #![no_std]
 
@@ -51,7 +70,7 @@ use embedded_graphics::{
 use ssd1306::{prelude::*, Ssd1306};
 
 // A type definition for the GPIO pin to be used for our LED
-type DccDirPin = gpioa::PA6<Output<PushPull>>;
+type DccDirPin = gpioa::PA3<Output<PushPull>>;
 
 // Make DCC thingy globally available
 static G_DCC: Mutex<RefCell<Option<DccInterruptHandler<DccDirPin>>>> =
@@ -108,7 +127,7 @@ fn main() -> ! {
     let mut flash = dp.FLASH.constrain();
 
     // Prepare the alternate function I/O registers
-    // let mut afio = dp.AFIO.constrain();
+    let mut afio = dp.AFIO.constrain();
     // let clocks = rcc.cfgr.freeze(&mut flash.acr);
     let clocks = rcc
         .cfgr
@@ -123,7 +142,7 @@ fn main() -> ! {
     // let mut gpioc = dp.GPIOC.split();
 
     info!("a");
-    let dcc_pin = gpioa.pa6.into_push_pull_output(&mut gpioa.crl);
+    let dcc_pin = gpioa.pa3.into_push_pull_output(&mut gpioa.crl);
 
     let mut dcc = DccInterruptHandler::new(dcc_pin);
     let pkt = SpeedAndDirection::builder()
@@ -160,12 +179,13 @@ fn main() -> ! {
 
     info!("Init I²C");
     cp.DWT.enable_cycle_counter();
-    let scl = gpiob.pb10.into_alternate_open_drain(&mut gpiob.crh);
-    let sda = gpiob.pb11.into_alternate_open_drain(&mut gpiob.crh);
+    let scl = gpiob.pb6.into_alternate_open_drain(&mut gpiob.crl);
+    let sda = gpiob.pb7.into_alternate_open_drain(&mut gpiob.crl);
     info!("a");
-    let i2c = BlockingI2c::i2c2(
-        dp.I2C2,
+    let i2c = BlockingI2c::i2c1(
+        dp.I2C1,
         (scl, sda),
+        &mut afio.mapr,
         Mode::Standard {
             frequency: 400.kHz(),
         },
@@ -204,13 +224,13 @@ fn main() -> ! {
 
     // LED to show when power is on
     // let mut led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
-    let mut led1 = gpiob.pb13.into_push_pull_output(&mut gpiob.crh);
-    let mut led2 = gpiob.pb12.into_push_pull_output(&mut gpiob.crh);
+    let mut led1 = gpioa.pa1.into_push_pull_output(&mut gpioa.crl);
+    let mut led2 = gpioa.pa0.into_push_pull_output(&mut gpioa.crl);
 
     // set up ADC
     let mut adc1 = adc::Adc::adc1(dp.ADC1, clocks);
-    let mut ch0 = gpiob.pb0.into_analog(&mut gpiob.crl);
-    let mut ch1 = gpiob.pb1.into_analog(&mut gpiob.crl);
+    let mut ch0 = gpiob.pb1.into_analog(&mut gpiob.crl);
+    let mut ch1 = gpiob.pb0.into_analog(&mut gpiob.crl);
 
     let mut adc2 = adc::Adc::adc2(dp.ADC2, clocks);
     let mut current_pin = gpioa.pa7.into_analog(&mut gpioa.crl);
