@@ -29,7 +29,6 @@
 #![no_main]
 #![no_std]
 
-const LOCO1_ADDR: u8 = 2;
 const LOCO2_ADDR: u8 = 3;
 
 // #[macro_use]
@@ -50,10 +49,10 @@ use crate::hal::{
     prelude::*,
     timer::{CounterUs, Event},
 };
-
 use core::cell::RefCell;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
+use embedded_hal::digital::v2::InputPin;
 
 use dcc_rs::{packets::*, DccInterruptHandler};
 
@@ -83,6 +82,78 @@ static G_TIM: Mutex<RefCell<Option<CounterUs<TIM2>>>> =
 // place for sending packets
 static TX_BUFFER: Mutex<RefCell<Option<(SerialiseBuffer, usize)>>> =
     Mutex::new(RefCell::new(None));
+
+struct AddressSwitches<
+    A: InputPin,
+    B: InputPin,
+    C: InputPin,
+    D: InputPin,
+    E: InputPin,
+    F: InputPin,
+    G: InputPin,
+> {
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+    e: E,
+    f: F,
+    g: G,
+    value: u8,
+}
+
+impl<
+        A: InputPin,
+        B: InputPin,
+        C: InputPin,
+        D: InputPin,
+        E: InputPin,
+        F: InputPin,
+        G: InputPin,
+    > AddressSwitches<A, B, C, D, E, F, G>
+{
+    pub fn new(a: A, b: B, c: C, d: D, e: E, f: F, g: G) -> Self {
+        let mut addr = Self {
+            a,
+            b,
+            c,
+            d,
+            e,
+            f,
+            g,
+            value: 0,
+        };
+        addr.update();
+        addr
+    }
+
+    pub fn update(&mut self) {
+        match (
+            self.a.is_low(),
+            self.b.is_low(),
+            self.c.is_low(),
+            self.d.is_low(),
+            self.e.is_low(),
+            self.f.is_low(),
+            self.g.is_low(),
+        ) {
+            (Ok(a), Ok(b), Ok(c), Ok(d), Ok(e), Ok(f), Ok(g)) => {
+                self.value = a as u8
+                    | (b as u8) << 1
+                    | (c as u8) << 2
+                    | (d as u8) << 3
+                    | (e as u8) << 4
+                    | (f as u8) << 5
+                    | (g as u8) << 6
+            }
+            _ => panic!(""),
+        }
+    }
+
+    pub fn value(&self) -> u8 {
+        self.value
+    }
+}
 
 #[interrupt]
 fn TIM2() {
@@ -227,6 +298,27 @@ fn main() -> ! {
     let mut led1 = gpioa.pa1.into_push_pull_output(&mut gpioa.crl);
     let mut led2 = gpioa.pa0.into_push_pull_output(&mut gpioa.crl);
 
+    let mut out_en = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
+    out_en.set_high();
+
+    // remove pins from the jtag peripheral
+    let (pa15, pb3, pb4) =
+        afio.mapr.disable_jtag(gpioa.pa15, gpiob.pb3, gpiob.pb4);
+
+    // set up pins for address selectors
+    info!("Set up address pins");
+    let mut addr_left = AddressSwitches::new(
+        gpiob.pb15.into_pull_up_input(&mut gpiob.crh),
+        gpioa.pa8.into_pull_up_input(&mut gpioa.crh),
+        gpioa.pa9.into_pull_up_input(&mut gpioa.crh),
+        gpioa.pa10.into_pull_up_input(&mut gpioa.crh),
+        gpioa.pa11.into_pull_up_input(&mut gpioa.crh),
+        gpioa.pa12.into_pull_up_input(&mut gpioa.crh),
+        pa15.into_pull_up_input(&mut gpioa.crh),
+    );
+    addr_left.update();
+    info!("address: {}", addr_left.value());
+
     // set up ADC
     let mut adc1 = adc::Adc::adc1(dp.ADC1, clocks);
     let mut ch0 = gpiob.pb1.into_analog(&mut gpiob.crl);
@@ -250,6 +342,9 @@ fn main() -> ! {
     loop {
         // read the current
         current = adc2.read(&mut current_pin).unwrap();
+
+        // update address
+        addr_left.update();
 
         // read the control
         let control: u16 = if channel_select {
@@ -284,7 +379,7 @@ fn main() -> ! {
         let loco_addr = if channel_select {
             speed1 = speed;
             dir1 = direction;
-            LOCO1_ADDR
+            addr_left.value()
         } else {
             speed2 = speed;
             dir2 = direction;
@@ -310,14 +405,19 @@ fn main() -> ! {
 
         info!(
             "Speed {}: {}, speed {}: {}, current: {}",
-            LOCO1_ADDR, speed1, LOCO2_ADDR, speed2, current
+            addr_left.value(),
+            speed1,
+            LOCO2_ADDR,
+            speed2,
+            current
         );
 
         address_display.reset();
         write!(
             &mut address_display,
             "{:03} TRAIN {:03}",
-            LOCO1_ADDR, LOCO2_ADDR
+            addr_left.value(),
+            LOCO2_ADDR
         )
         .unwrap();
 
