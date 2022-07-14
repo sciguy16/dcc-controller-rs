@@ -15,7 +15,6 @@ defmt-rtt = "0.3"
 embedded-graphics = "0.7"
 embedded-hal = { version = "0.2", features = ["unproven"] }
 nb = "1"
-panic-halt = "0.2"
 ssd1306 = "0.7"
 
 [dependencies.stm32f1xx-hal]

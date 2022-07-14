@@ -31,42 +31,46 @@
 
 const LOCO2_ADDR: u8 = 3;
 
-// #[macro_use]
-// extern crate defmt; // logging macros
-use core::fmt::Write;
-use defmt::info;
-
-use defmt_rtt as _;
-use panic_halt as _;
-
-use stm32f1xx_hal as hal;
-
 use crate::hal::{
     adc,
-    gpio::{gpioa, Output, PushPull},
+    gpio::{gpioa, gpiob, Output, PushPull},
     i2c::{BlockingI2c, Mode},
     pac::{interrupt, Interrupt, Peripherals, TIM2},
     prelude::*,
     timer::{CounterUs, Event},
 };
 use core::cell::RefCell;
+use core::fmt::Write;
+use core::panic::PanicInfo;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
-use embedded_hal::digital::v2::InputPin;
-
 use dcc_rs::{packets::*, DccInterruptHandler};
-
-// For in the graphics drawing utilities like the font
-// and the drawing routines:
+use defmt::info;
+use defmt_rtt as _;
 use embedded_graphics::{
     mono_font::{ascii, MonoTextStyleBuilder},
     pixelcolor::BinaryColor,
     prelude::*,
     text::{Baseline, Text},
 };
-
-// The display driver:
+use embedded_hal::digital::v2::InputPin;
 use ssd1306::{prelude::*, Ssd1306};
+use stm32f1xx_hal as hal;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! {
+    // grab alarm LED and turn it on
+    if let Some(mut led) =
+        cortex_m::interrupt::free(|cs| LED_ALARM.borrow(cs).borrow_mut().take())
+    {
+        led.set_low();
+    }
+    loop {
+        unsafe {
+            core::arch::asm!("nop");
+        }
+    }
+}
 
 // A type definition for the GPIO pin to be used for our LED
 type DccDirPin = gpioa::PA3<Output<PushPull>>;
@@ -81,6 +85,10 @@ static G_TIM: Mutex<RefCell<Option<CounterUs<TIM2>>>> =
 
 // place for sending packets
 static TX_BUFFER: Mutex<RefCell<Option<(SerialiseBuffer, usize)>>> =
+    Mutex::new(RefCell::new(None));
+
+type LedAlarm = gpiob::PB13<Output<PushPull>>;
+static LED_ALARM: Mutex<RefCell<Option<LedAlarm>>> =
     Mutex::new(RefCell::new(None));
 
 struct AddressSwitches<
@@ -211,6 +219,13 @@ fn main() -> ! {
     let mut gpioa = dp.GPIOA.split();
     let mut gpiob = dp.GPIOB.split();
     // let mut gpioc = dp.GPIOC.split();
+
+    // store the alarm led pin so that it is available for the panic handler
+    let mut led_alarm = gpiob.pb13.into_push_pull_output(&mut gpiob.crh);
+    led_alarm.set_high();
+    cortex_m::interrupt::free(|cs| {
+        *LED_ALARM.borrow(cs).borrow_mut() = Some(led_alarm)
+    });
 
     info!("a");
     let dcc_pin = gpioa.pa3.into_push_pull_output(&mut gpioa.crl);
