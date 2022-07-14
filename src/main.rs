@@ -29,8 +29,6 @@
 #![no_main]
 #![no_std]
 
-const LOCO2_ADDR: u8 = 3;
-
 use crate::hal::{
     adc,
     gpio::{gpioa, gpiob, Output, PushPull},
@@ -323,7 +321,21 @@ fn main() -> ! {
         pa15.into_pull_up_input(&mut gpioa.crh),
     );
     addr_left.update();
-    info!("address: {}", addr_left.value());
+    let mut addr_right = AddressSwitches::new(
+        pb3.into_pull_up_input(&mut gpiob.crl),
+        pb4.into_pull_up_input(&mut gpiob.crl),
+        gpiob.pb5.into_pull_up_input(&mut gpiob.crl),
+        gpioa.pa6.into_pull_up_input(&mut gpioa.crl),
+        gpioa.pa5.into_pull_up_input(&mut gpioa.crl),
+        gpiob.pb8.into_pull_up_input(&mut gpiob.crh),
+        gpiob.pb9.into_pull_up_input(&mut gpiob.crh),
+    );
+    addr_right.update();
+    info!(
+        "addresses: left={}, right={}",
+        addr_left.value(),
+        addr_right.value()
+    );
 
     // set up ADC
     info!("Configure ADC");
@@ -353,6 +365,7 @@ fn main() -> ! {
 
         // update address
         addr_left.update();
+        addr_right.update();
 
         // read the control
         let control: u16 = if channel_select {
@@ -391,7 +404,7 @@ fn main() -> ! {
         } else {
             speed2 = speed;
             dir2 = direction;
-            LOCO2_ADDR
+            addr_right.value()
         };
 
         //info!("tx, addr = {}", addr);
@@ -415,7 +428,7 @@ fn main() -> ! {
             "Speed {}: {}, speed {}: {}, current: {}",
             addr_left.value(),
             speed1,
-            LOCO2_ADDR,
+            addr_right.value(),
             speed2,
             current
         );
@@ -425,7 +438,7 @@ fn main() -> ! {
             &mut address_display,
             "{:03} TRAIN {:03}",
             addr_left.value(),
-            LOCO2_ADDR
+            addr_right.value()
         )
         .unwrap();
 
