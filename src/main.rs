@@ -45,7 +45,7 @@ use core::panic::PanicInfo;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use dcc_rs::{packets::*, DccInterruptHandler};
-use defmt::info;
+use defmt::{debug, info};
 use defmt_rtt as _;
 use embedded_graphics::{
     mono_font::{ascii, MonoTextStyleBuilder},
@@ -218,7 +218,6 @@ fn main() -> ! {
 
     let mut gpioa = dp.GPIOA.split();
     let mut gpiob = dp.GPIOB.split();
-    // let mut gpioc = dp.GPIOC.split();
 
     // store the alarm led pin so that it is available for the panic handler
     let mut led_alarm = gpiob.pb13.into_push_pull_output(&mut gpiob.crh);
@@ -227,7 +226,7 @@ fn main() -> ! {
         *LED_ALARM.borrow(cs).borrow_mut() = Some(led_alarm)
     });
 
-    info!("a");
+    info!("Initialise DCC interrupt handler");
     let dcc_pin = gpioa.pa3.into_push_pull_output(&mut gpioa.crl);
 
     let mut dcc = DccInterruptHandler::new(dcc_pin);
@@ -238,36 +237,30 @@ fn main() -> ! {
         .unwrap()
         .direction(Direction::Forward)
         .build();
-    info!("a");
+
     let mut buffer = SerialiseBuffer::default();
     let len = pkt.serialise(&mut buffer).unwrap();
     dcc.write(buffer.get(0..len).unwrap()).unwrap();
-    info!("a");
 
     // Move the DCC thingy into our global storage
     cortex_m::interrupt::free(|cs| *G_DCC.borrow(cs).borrow_mut() = Some(dcc));
-    info!("a");
 
+    info!("Initialise timer");
     // Set up a timer expiring after 1s
     let mut timer = dp.TIM2.counter_us(&clocks);
     // Generate an interrupt when the timer expires
-    info!("a");
     timer.start(50000.micros()).unwrap();
-    info!("a");
     timer.listen(Event::Update);
-    info!("a");
 
     // Move the timer into our global storage
     cortex_m::interrupt::free(|cs| {
         *G_TIM.borrow(cs).borrow_mut() = Some(timer)
     });
-    info!("a");
 
-    info!("Init I²C");
+    info!("Init I2C");
     cp.DWT.enable_cycle_counter();
     let scl = gpiob.pb6.into_alternate_open_drain(&mut gpiob.crl);
     let sda = gpiob.pb7.into_alternate_open_drain(&mut gpiob.crl);
-    info!("a");
     let i2c = BlockingI2c::i2c1(
         dp.I2C1,
         (scl, sda),
@@ -303,13 +296,11 @@ fn main() -> ! {
     unsafe {
         cortex_m::peripheral::NVIC::unmask(Interrupt::TIM2);
     }
-    info!("init complete");
 
     // make a delay thing to send packets
     let mut delay = cp.SYST.delay(&clocks);
 
     // LED to show when power is on
-    // let mut led = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
     let mut led1 = gpioa.pa1.into_push_pull_output(&mut gpioa.crl);
     let mut led2 = gpioa.pa0.into_push_pull_output(&mut gpioa.crl);
 
@@ -335,6 +326,7 @@ fn main() -> ! {
     info!("address: {}", addr_left.value());
 
     // set up ADC
+    info!("Configure ADC");
     let mut adc1 = adc::Adc::adc1(dp.ADC1, clocks);
     let mut ch0 = gpiob.pb1.into_analog(&mut gpiob.crl);
     let mut ch1 = gpiob.pb0.into_analog(&mut gpiob.crl);
@@ -354,6 +346,7 @@ fn main() -> ! {
     let mut address_display = FmtBuf::new();
     let mut speed_display = FmtBuf::new();
 
+    info!("Enter main loop");
     loop {
         // read the current
         current = adc2.read(&mut current_pin).unwrap();
@@ -418,7 +411,7 @@ fn main() -> ! {
 
         channel_select ^= true;
 
-        info!(
+        debug!(
             "Speed {}: {}, speed {}: {}, current: {}",
             addr_left.value(),
             speed1,
