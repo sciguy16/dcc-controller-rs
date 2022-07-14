@@ -38,7 +38,7 @@ use crate::hal::{
     timer::{CounterUs, Event},
 };
 use core::cell::RefCell;
-use core::fmt::Write;
+use core::fmt::{self, Display, Formatter, Write};
 use core::panic::PanicInfo;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
@@ -88,6 +88,30 @@ static TX_BUFFER: Mutex<RefCell<Option<(SerialiseBuffer, usize)>>> =
 type LedAlarm = gpiob::PB13<Output<PushPull>>;
 static LED_ALARM: Mutex<RefCell<Option<LedAlarm>>> =
     Mutex::new(RefCell::new(None));
+
+enum Channel {
+    Left,
+    Right,
+}
+
+impl Display for Channel {
+    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+        write!(
+            fmt,
+            "{}",
+            match self {
+                Channel::Left => "LEFT",
+                Channel::Right => "RIGHT",
+            }
+        )
+    }
+}
+
+enum RunState {
+    Run,
+    Prog(Channel),
+    EmergencyStop,
+}
 
 struct AddressSwitches<
     A: InputPin,
@@ -301,6 +325,10 @@ fn main() -> ! {
     // LED to show when power is on
     let mut led1 = gpioa.pa1.into_push_pull_output(&mut gpioa.crl);
     let mut led2 = gpioa.pa0.into_push_pull_output(&mut gpioa.crl);
+    let mut led_prog = gpiob.pb12.into_push_pull_output(&mut gpiob.crh);
+    led1.set_high();
+    led2.set_high();
+    led_prog.set_high();
 
     let mut out_en = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
     out_en.set_high();
@@ -337,6 +365,12 @@ fn main() -> ! {
         addr_right.value()
     );
 
+    info!("Configure button pins");
+    let btn_stop = gpiob.pb14.into_pull_up_input(&mut gpiob.crh);
+    let btn_prog = gpioa.pa4.into_pull_up_input(&mut gpioa.crl);
+    let sw_prog_left = gpiob.pb11.into_pull_up_input(&mut gpiob.crh);
+    let sw_prog_right = gpiob.pb10.into_pull_up_input(&mut gpiob.crh);
+
     // set up ADC
     info!("Configure ADC");
     let mut adc1 = adc::Adc::adc1(dp.ADC1, clocks);
@@ -355,8 +389,10 @@ fn main() -> ! {
     let mut dir1 = Direction::Forward;
     let mut dir2 = Direction::Forward;
 
-    let mut address_display = FmtBuf::new();
-    let mut speed_display = FmtBuf::new();
+    let mut row1 = FmtBuf::new();
+    let mut row2 = FmtBuf::new();
+
+    let mut run_state = RunState::Run;
 
     info!("Enter main loop");
     loop {
@@ -367,117 +403,213 @@ fn main() -> ! {
         addr_left.update();
         addr_right.update();
 
-        // read the control
-        let control: u16 = if channel_select {
-            adc1.read(&mut ch0).unwrap()
-        } else {
-            adc1.read(&mut ch1).unwrap()
+        run_state = match run_state {
+            RunState::Run => {
+                // read the control
+                let control: u16 = if channel_select {
+                    adc1.read(&mut ch0).unwrap()
+                } else {
+                    adc1.read(&mut ch1).unwrap()
+                };
+
+                // it's a 12-bit ADC, range is 0..=4095
+                // speed is -16..=16
+                // use the following ranges:
+                // 0..1600: -16..0
+                // 2495..=4095: 0..=16
+                // 1601..2495: 0
+                let (speed, direction) = match control {
+                    0..=1600 => (28 - control / 57, Direction::Backward),
+                    2495..=4095 => ((control - 2494) / 57, Direction::Forward),
+                    _ => (0, Direction::Forward),
+                };
+                // info!(
+                //     "control {} set to: {}, speed is {} {}",
+                //     channel_select as u8, control, speed, direction
+                // );
+                let speed = (speed & 0x1f) as u8;
+                match (speed, channel_select) {
+                    (0, true) => led1.set_high(),
+                    (0, false) => led2.set_high(),
+                    (_, true) => led1.set_low(),
+                    (_, false) => led2.set_low(),
+                };
+
+                let loco_addr = if channel_select {
+                    speed1 = speed;
+                    dir1 = direction;
+                    addr_left.value()
+                } else {
+                    speed2 = speed;
+                    dir2 = direction;
+                    addr_right.value()
+                };
+
+                //info!("tx, addr = {}", addr);
+                // pop a new chunk of data into the buffer
+                let pkt = SpeedAndDirection::builder()
+                    .address(loco_addr)
+                    .unwrap()
+                    .speed(speed)
+                    .unwrap()
+                    .direction(direction)
+                    .build();
+                let mut buffer = SerialiseBuffer::default();
+                let len = pkt.serialise(&mut buffer).unwrap();
+                cortex_m::interrupt::free(|cs| {
+                    *TX_BUFFER.borrow(cs).borrow_mut() = Some((buffer, len))
+                });
+
+                channel_select ^= true;
+
+                debug!(
+                    "Speed {}: {}, speed {}: {}, current: {}",
+                    addr_left.value(),
+                    speed1,
+                    addr_right.value(),
+                    speed2,
+                    current
+                );
+
+                row1.reset();
+                write!(
+                    &mut row1,
+                    "{:03} TRAIN {:03}",
+                    addr_left.value(),
+                    addr_right.value()
+                )
+                .unwrap();
+
+                row2.reset();
+                {
+                    let a = if speed1 == 0 {
+                        ' '
+                    } else if let Direction::Forward = dir1 {
+                        '>'
+                    } else {
+                        '<'
+                    };
+                    let b = if speed2 == 0 {
+                        ' '
+                    } else if let Direction::Forward = dir2 {
+                        '>'
+                    } else {
+                        '<'
+                    };
+                    write!(
+                        &mut row2,
+                        "{a}{speed1:02}{a}     {b}{speed2:02}{b}",
+                    )
+                }
+                .unwrap();
+
+                // Display is 128 x 64
+                // Font is 10x20
+                //
+                // 000  loco  000
+                //
+                // 05 >      > 04
+                //
+
+                delay.delay_ms(10u16);
+
+                // decide the next state
+                if btn_stop.is_low() {
+                    info!("Emergency stop!");
+                    RunState::EmergencyStop
+                } else if sw_prog_left.is_low() {
+                    info!("Program mode LEFT");
+                    RunState::Prog(Channel::Left)
+                } else if sw_prog_right.is_low() {
+                    info!("Program mode RIGHT");
+                    RunState::Prog(Channel::Right)
+                } else {
+                    RunState::Run
+                }
+            }
+            RunState::Prog(chan) => {
+                // Display programming mode on screen with address and
+                // channel selection
+                led_prog.set_low();
+
+                row1.reset();
+                row2.reset();
+                write!(
+                    &mut row1,
+                    "{:03} TRAIN {:03}",
+                    addr_left.value(),
+                    addr_right.value()
+                )
+                .unwrap();
+                write!(&mut row2, "PROG: {}", chan).unwrap();
+
+                // handle pressing the "program" button
+                if btn_prog.is_low() {
+                    led_prog.set_high();
+                    //TODO do program sequence
+                }
+
+                // decide the next state
+                let left = sw_prog_left.is_high();
+                let right = sw_prog_right.is_high();
+
+                match (left, right) {
+                    (true, true) => {
+                        info!("RUN mode");
+                        led_prog.set_high();
+                        RunState::Run
+                    }
+                    (true, false) => RunState::Prog(Channel::Right),
+                    (false, true) => RunState::Prog(Channel::Left),
+                    (false, false) => {
+                        // In theory it's impossible for the switch to
+                        // be in both positions at the same time...
+                        RunState::EmergencyStop
+                    }
+                }
+            }
+            RunState::EmergencyStop => {
+                // disable outputs, draw "e-stop" on display and panic
+                out_en.set_low();
+
+                row1.reset();
+                row2.reset();
+                write!(&mut row1, "STOP",).unwrap();
+
+                // Empty the display:
+                display.clear();
+
+                // Draw 2 lines of text:
+                Text::with_baseline(
+                    row1.as_str(),
+                    Point::new(0, 25),
+                    text_style,
+                    Baseline::Alphabetic,
+                )
+                .draw(&mut display)
+                .unwrap();
+
+                Text::with_baseline(
+                    row2.as_str(),
+                    Point::new(0, 50),
+                    text_style,
+                    Baseline::Alphabetic,
+                )
+                .draw(&mut display)
+                .unwrap();
+
+                display.flush().unwrap();
+
+                panic!();
+            }
         };
 
-        // it's a 12-bit ADC, range is 0..=4095
-        // speed is -16..=16
-        // use the following ranges:
-        // 0..1600: -16..0
-        // 2495..=4095: 0..=16
-        // 1601..2495: 0
-        let (speed, direction) = match control {
-            0..=1600 => (28 - control / 57, Direction::Backward),
-            2495..=4095 => ((control - 2494) / 57, Direction::Forward),
-            _ => (0, Direction::Forward),
-        };
-        // info!(
-        //     "control {} set to: {}, speed is {} {}",
-        //     channel_select as u8, control, speed, direction
-        // );
-        let speed = (speed & 0x1f) as u8;
-        match (speed, channel_select) {
-            (0, true) => led1.set_high(),
-            (0, false) => led2.set_high(),
-            (_, true) => led1.set_low(),
-            (_, false) => led2.set_low(),
-        };
-
-        let loco_addr = if channel_select {
-            speed1 = speed;
-            dir1 = direction;
-            addr_left.value()
-        } else {
-            speed2 = speed;
-            dir2 = direction;
-            addr_right.value()
-        };
-
-        //info!("tx, addr = {}", addr);
-        // pop a new chunk of data into the buffer
-        let pkt = SpeedAndDirection::builder()
-            .address(loco_addr)
-            .unwrap()
-            .speed(speed)
-            .unwrap()
-            .direction(direction)
-            .build();
-        let mut buffer = SerialiseBuffer::default();
-        let len = pkt.serialise(&mut buffer).unwrap();
-        cortex_m::interrupt::free(|cs| {
-            *TX_BUFFER.borrow(cs).borrow_mut() = Some((buffer, len))
-        });
-
-        channel_select ^= true;
-
-        debug!(
-            "Speed {}: {}, speed {}: {}, current: {}",
-            addr_left.value(),
-            speed1,
-            addr_right.value(),
-            speed2,
-            current
-        );
-
-        address_display.reset();
-        write!(
-            &mut address_display,
-            "{:03} TRAIN {:03}",
-            addr_left.value(),
-            addr_right.value()
-        )
-        .unwrap();
-
-        speed_display.reset();
-        {
-            let a = if speed1 == 0 {
-                ' '
-            } else if let Direction::Forward = dir1 {
-                '>'
-            } else {
-                '<'
-            };
-            let b = if speed2 == 0 {
-                ' '
-            } else if let Direction::Forward = dir2 {
-                '>'
-            } else {
-                '<'
-            };
-            write!(
-                &mut speed_display,
-                "{a}{speed1:02}{a}     {b}{speed2:02}{b}",
-            )
-        }
-        .unwrap();
-
-        // Display is 128 x 64
-        // Font is 10x20
-        //
-        // 000  loco  000
-        //
-        // 05 >      > 04
-        //
         // Empty the display:
         display.clear();
 
-        // Draw 3 lines of text:
+        // Draw 2 lines of text:
         Text::with_baseline(
-            address_display.as_str(),
+            row1.as_str(),
             Point::new(0, 25),
             text_style,
             Baseline::Alphabetic,
@@ -486,7 +618,7 @@ fn main() -> ! {
         .unwrap();
 
         Text::with_baseline(
-            speed_display.as_str(),
+            row2.as_str(),
             Point::new(0, 50),
             text_style,
             Baseline::Alphabetic,
@@ -495,8 +627,6 @@ fn main() -> ! {
         .unwrap();
 
         display.flush().unwrap();
-
-        delay.delay_ms(10u16);
     }
 }
 
