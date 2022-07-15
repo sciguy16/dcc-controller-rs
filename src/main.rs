@@ -51,21 +51,41 @@ use embedded_graphics::{
     prelude::*,
     text::{Baseline, Text},
 };
-use embedded_hal::digital::v2::InputPin;
 use ssd1306::{prelude::*, Ssd1306};
 use stm32f1xx_hal as hal;
 
+mod address_switches;
+
+use address_switches::AddressSwitches;
+
+const CLOCK_MHZ: u32 = 48;
+
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
+    // Turn off outputs
+    cortex_m::interrupt::free(|cs| {
+        if let Some(out_en) = LED_ALARM.borrow(cs).borrow_mut().as_mut() {
+            out_en.set_low();
+        }
+    });
+
     // grab alarm LED and turn it on
-    if let Some(mut led) =
-        cortex_m::interrupt::free(|cs| LED_ALARM.borrow(cs).borrow_mut().take())
-    {
+    let mut led = cortex_m::interrupt::free(|cs| {
+        LED_ALARM.borrow(cs).borrow_mut().take()
+    });
+    if let Some(led) = &mut led {
         led.set_low();
     }
     loop {
-        unsafe {
-            core::arch::asm!("nop");
+        // Counting nops here doesn't give a precise timing because the
+        // DCC timer is still running
+        for _ in 0..CLOCK_MHZ * 10_000 {
+            unsafe {
+                core::arch::asm!("nop");
+            }
+        }
+        if let Some(led) = &mut led {
+            led.toggle();
         }
     }
 }
@@ -89,6 +109,10 @@ type LedAlarm = gpiob::PB13<Output<PushPull>>;
 static LED_ALARM: Mutex<RefCell<Option<LedAlarm>>> =
     Mutex::new(RefCell::new(None));
 
+type EnablePin = gpioa::PA2<Output<PushPull>>;
+static ENABLE_PIN: Mutex<RefCell<Option<EnablePin>>> =
+    Mutex::new(RefCell::new(None));
+
 enum Channel {
     Left,
     Right,
@@ -108,81 +132,10 @@ impl Display for Channel {
 }
 
 enum RunState {
-    Run,
+    /// Run state tracks the channel and alternates between them
+    Run(Channel),
     Prog(Channel),
     EmergencyStop,
-}
-
-struct AddressSwitches<
-    A: InputPin,
-    B: InputPin,
-    C: InputPin,
-    D: InputPin,
-    E: InputPin,
-    F: InputPin,
-    G: InputPin,
-> {
-    a: A,
-    b: B,
-    c: C,
-    d: D,
-    e: E,
-    f: F,
-    g: G,
-    value: u8,
-}
-
-impl<
-        A: InputPin,
-        B: InputPin,
-        C: InputPin,
-        D: InputPin,
-        E: InputPin,
-        F: InputPin,
-        G: InputPin,
-    > AddressSwitches<A, B, C, D, E, F, G>
-{
-    pub fn new(a: A, b: B, c: C, d: D, e: E, f: F, g: G) -> Self {
-        let mut addr = Self {
-            a,
-            b,
-            c,
-            d,
-            e,
-            f,
-            g,
-            value: 0,
-        };
-        addr.update();
-        addr
-    }
-
-    pub fn update(&mut self) {
-        match (
-            self.a.is_low(),
-            self.b.is_low(),
-            self.c.is_low(),
-            self.d.is_low(),
-            self.e.is_low(),
-            self.f.is_low(),
-            self.g.is_low(),
-        ) {
-            (Ok(a), Ok(b), Ok(c), Ok(d), Ok(e), Ok(f), Ok(g)) => {
-                self.value = a as u8
-                    | (b as u8) << 1
-                    | (c as u8) << 2
-                    | (d as u8) << 3
-                    | (e as u8) << 4
-                    | (f as u8) << 5
-                    | (g as u8) << 6
-            }
-            _ => panic!(""),
-        }
-    }
-
-    pub fn value(&self) -> u8 {
-        self.value
-    }
 }
 
 #[interrupt]
@@ -233,7 +186,7 @@ fn main() -> ! {
     let clocks = rcc
         .cfgr
         .use_hse(8.MHz())
-        .sysclk(48.MHz())
+        .sysclk(CLOCK_MHZ.MHz())
         //.pclk1(8.MHz())
         .freeze(&mut flash.acr);
     // info!("adc freq: {}", clocks.adcclk());
@@ -332,6 +285,9 @@ fn main() -> ! {
 
     let mut out_en = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
     out_en.set_high();
+    cortex_m::interrupt::free(|cs| {
+        *ENABLE_PIN.borrow(cs).borrow_mut() = Some(out_en)
+    });
 
     // remove pins from the jtag peripheral
     let (pa15, pb3, pb4) =
@@ -348,7 +304,6 @@ fn main() -> ! {
         gpioa.pa12.into_pull_up_input(&mut gpioa.crh),
         pa15.into_pull_up_input(&mut gpioa.crh),
     );
-    addr_left.update();
     let mut addr_right = AddressSwitches::new(
         pb3.into_pull_up_input(&mut gpiob.crl),
         pb4.into_pull_up_input(&mut gpiob.crl),
@@ -358,7 +313,6 @@ fn main() -> ! {
         gpiob.pb8.into_pull_up_input(&mut gpiob.crh),
         gpiob.pb9.into_pull_up_input(&mut gpiob.crh),
     );
-    addr_right.update();
     info!(
         "addresses: left={}, right={}",
         addr_left.value(),
@@ -392,7 +346,7 @@ fn main() -> ! {
     let mut row1 = FmtBuf::new();
     let mut row2 = FmtBuf::new();
 
-    let mut run_state = RunState::Run;
+    let mut run_state = RunState::Run(Channel::Left);
 
     info!("Enter main loop");
     loop {
@@ -404,7 +358,7 @@ fn main() -> ! {
         addr_right.update();
 
         run_state = match run_state {
-            RunState::Run => {
+            RunState::Run(chan) => {
                 // read the control
                 let control: u16 = if channel_select {
                     adc1.read(&mut ch0).unwrap()
@@ -524,7 +478,7 @@ fn main() -> ! {
                     info!("Program mode RIGHT");
                     RunState::Prog(Channel::Right)
                 } else {
-                    RunState::Run
+                    RunState::Run(chan)
                 }
             }
             RunState::Prog(chan) => {
@@ -557,7 +511,7 @@ fn main() -> ! {
                     (true, true) => {
                         info!("RUN mode");
                         led_prog.set_high();
-                        RunState::Run
+                        RunState::Run(Channel::Left)
                     }
                     (true, false) => RunState::Prog(Channel::Right),
                     (false, true) => RunState::Prog(Channel::Left),
@@ -570,7 +524,14 @@ fn main() -> ! {
             }
             RunState::EmergencyStop => {
                 // disable outputs, draw "e-stop" on display and panic
-                out_en.set_low();
+
+                cortex_m::interrupt::free(|cs| {
+                    if let Some(out_en) =
+                        LED_ALARM.borrow(cs).borrow_mut().as_mut()
+                    {
+                        out_en.set_low();
+                    }
+                });
 
                 row1.reset();
                 row2.reset();
