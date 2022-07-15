@@ -74,6 +74,49 @@ impl ChannelProps {
             ..Default::default()
         }
     }
+
+    pub fn direction_arrow(&self) -> char {
+        match (self.speed, self.direction) {
+            (0, _) => ' ',
+            (_, Direction::Forward) => '>',
+            (_, Direction::Backward) => '<',
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Channel {
+    Left,
+    Right,
+}
+
+impl Channel {
+    pub fn swap(self) -> Self {
+        match self {
+            Channel::Left => Channel::Right,
+            Channel::Right => Channel::Left,
+        }
+    }
+}
+
+impl Display for Channel {
+    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+        write!(
+            fmt,
+            "{}",
+            match self {
+                Channel::Left => "LEFT",
+                Channel::Right => "RIGHT",
+            }
+        )
+    }
+}
+
+enum RunState {
+    /// Run state tracks the channel and alternates between them
+    Run(Channel),
+    Prog(Channel),
+    EmergencyStop,
 }
 
 #[panic_handler]
@@ -128,41 +171,6 @@ static LED_ALARM: Mutex<RefCell<Option<LedAlarm>>> =
 type EnablePin = gpioa::PA2<Output<PushPull>>;
 static ENABLE_PIN: Mutex<RefCell<Option<EnablePin>>> =
     Mutex::new(RefCell::new(None));
-
-#[derive(Copy, Clone)]
-enum Channel {
-    Left,
-    Right,
-}
-
-impl Channel {
-    pub fn swap(self) -> Self {
-        match self {
-            Channel::Left => Channel::Right,
-            Channel::Right => Channel::Left,
-        }
-    }
-}
-
-impl Display for Channel {
-    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
-        write!(
-            fmt,
-            "{}",
-            match self {
-                Channel::Left => "LEFT",
-                Channel::Right => "RIGHT",
-            }
-        )
-    }
-}
-
-enum RunState {
-    /// Run state tracks the channel and alternates between them
-    Run(Channel),
-    Prog(Channel),
-    EmergencyStop,
-}
 
 #[interrupt]
 fn TIM2() {
@@ -459,20 +467,8 @@ fn main() -> ! {
 
                 row2.reset();
                 {
-                    let a = if chan_left.speed == 0 {
-                        ' '
-                    } else if let Direction::Forward = chan_left.direction {
-                        '>'
-                    } else {
-                        '<'
-                    };
-                    let b = if chan_right.speed == 0 {
-                        ' '
-                    } else if let Direction::Forward = chan_right.direction {
-                        '>'
-                    } else {
-                        '<'
-                    };
+                    let a = chan_left.direction_arrow();
+                    let b = chan_right.direction_arrow();
                     write!(
                         &mut row2,
                         "{a}{speed1:02}{a}     {b}{speed2:02}{b}",
