@@ -237,31 +237,14 @@ fn main() -> ! {
 
     info!("Initialise DCC interrupt handler");
     let dcc_pin = gpioa.pa3.into_push_pull_output(&mut gpioa.crl);
-
-    let mut dcc = DccInterruptHandler::new(dcc_pin);
-    let pkt = SpeedAndDirection::builder()
-        .address(10)
-        .unwrap()
-        .speed(14)
-        .unwrap()
-        .direction(Direction::Forward)
-        .build();
-
-    let mut buffer = SerialiseBuffer::default();
-    let len = pkt.serialise(&mut buffer).unwrap();
-    dcc.write(buffer.get(0..len).unwrap()).unwrap();
-
-    // Move the DCC thingy into our global storage
+    let dcc = DccInterruptHandler::new(dcc_pin);
     cortex_m::interrupt::free(|cs| *G_DCC.borrow(cs).borrow_mut() = Some(dcc));
 
     info!("Initialise timer");
-    // Set up a timer expiring after 1s
     let mut timer = dp.TIM2.counter_us(&clocks);
     // Generate an interrupt when the timer expires
     timer.start(50000.micros()).unwrap();
     timer.listen(Event::Update);
-
-    // Move the timer into our global storage
     cortex_m::interrupt::free(|cs| {
         *G_TIM.borrow(cs).borrow_mut() = Some(timer)
     });
@@ -285,10 +268,7 @@ fn main() -> ! {
     );
 
     info!("Init display");
-    // Create the I²C display interface:
     let interface = ssd1306::I2CDisplayInterface::new(i2c);
-
-    // Create a driver instance and initialize:
     let mut display =
         Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
             .into_buffered_graphics_mode();
@@ -301,7 +281,6 @@ fn main() -> ! {
         .build();
 
     //enable TIM2 interrupt
-    // cortex_m::peripheral::NVIC::unpend(Interrupt::TIM2);
     unsafe {
         cortex_m::peripheral::NVIC::unmask(Interrupt::TIM2);
     }
@@ -323,12 +302,11 @@ fn main() -> ! {
         *ENABLE_PIN.borrow(cs).borrow_mut() = Some(out_en)
     });
 
-    // remove pins from the jtag peripheral
+    // remove pins from the jtag peripheral and set up pins for address
+    // selectors
+    info!("Set up address pins");
     let (pa15, pb3, pb4) =
         afio.mapr.disable_jtag(gpioa.pa15, gpiob.pb3, gpiob.pb4);
-
-    // set up pins for address selectors
-    info!("Set up address pins");
     let mut addr_left = AddressSwitches::new(
         gpiob.pb15.into_pull_up_input(&mut gpiob.crh),
         gpioa.pa8.into_pull_up_input(&mut gpioa.crh),
@@ -368,7 +346,6 @@ fn main() -> ! {
     let mut adc2 = adc::Adc::adc2(dp.ADC2, clocks);
     let mut current_pin = gpioa.pa7.into_analog(&mut gpioa.crl);
 
-    let mut current: u16;
     let mut chan_left = ChannelProps::with_address(addr_left.value());
     let mut chan_right = ChannelProps::with_address(addr_right.value());
 
@@ -380,7 +357,7 @@ fn main() -> ! {
     info!("Enter main loop");
     loop {
         // read the current
-        current = adc2.read(&mut current_pin).unwrap();
+        let current: u16 = adc2.read(&mut current_pin).unwrap();
 
         // update address
         addr_left.update();
