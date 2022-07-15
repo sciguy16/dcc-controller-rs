@@ -60,6 +60,22 @@ use address_switches::AddressSwitches;
 
 const CLOCK_MHZ: u32 = 48;
 
+#[derive(Default)]
+struct ChannelProps {
+    address: u8,
+    speed: u8,
+    direction: Direction,
+}
+
+impl ChannelProps {
+    pub fn with_address(address: u8) -> Self {
+        Self {
+            address,
+            ..Default::default()
+        }
+    }
+}
+
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
     // Turn off outputs
@@ -113,9 +129,19 @@ type EnablePin = gpioa::PA2<Output<PushPull>>;
 static ENABLE_PIN: Mutex<RefCell<Option<EnablePin>>> =
     Mutex::new(RefCell::new(None));
 
+#[derive(Copy, Clone)]
 enum Channel {
     Left,
     Right,
+}
+
+impl Channel {
+    pub fn swap(self) -> Self {
+        match self {
+            Channel::Left => Channel::Right,
+            Channel::Right => Channel::Left,
+        }
+    }
 }
 
 impl Display for Channel {
@@ -334,14 +360,9 @@ fn main() -> ! {
     let mut adc2 = adc::Adc::adc2(dp.ADC2, clocks);
     let mut current_pin = gpioa.pa7.into_analog(&mut gpioa.crl);
 
-    // alternate between channels
-    let mut channel_select = false;
-
     let mut current: u16;
-    let mut speed1 = 0;
-    let mut speed2 = 0;
-    let mut dir1 = Direction::Forward;
-    let mut dir2 = Direction::Forward;
+    let mut chan_left = ChannelProps::with_address(addr_left.value());
+    let mut chan_right = ChannelProps::with_address(addr_right.value());
 
     let mut row1 = FmtBuf::new();
     let mut row2 = FmtBuf::new();
@@ -359,11 +380,12 @@ fn main() -> ! {
 
         run_state = match run_state {
             RunState::Run(chan) => {
+                use Channel::*;
+
                 // read the control
-                let control: u16 = if channel_select {
-                    adc1.read(&mut ch0).unwrap()
-                } else {
-                    adc1.read(&mut ch1).unwrap()
+                let control: u16 = match chan {
+                    Left => adc1.read(&mut ch0).unwrap(),
+                    Right => adc1.read(&mut ch1).unwrap(),
                 };
 
                 // it's a 12-bit ADC, range is 0..=4095
@@ -382,21 +404,24 @@ fn main() -> ! {
                 //     channel_select as u8, control, speed, direction
                 // );
                 let speed = (speed & 0x1f) as u8;
-                match (speed, channel_select) {
-                    (0, true) => led1.set_high(),
-                    (0, false) => led2.set_high(),
-                    (_, true) => led1.set_low(),
-                    (_, false) => led2.set_low(),
+                match (speed, chan) {
+                    (0, Left) => led1.set_high(),
+                    (0, Right) => led2.set_high(),
+                    (_, Left) => led1.set_low(),
+                    (_, Right) => led2.set_low(),
                 };
 
-                let loco_addr = if channel_select {
-                    speed1 = speed;
-                    dir1 = direction;
-                    addr_left.value()
-                } else {
-                    speed2 = speed;
-                    dir2 = direction;
-                    addr_right.value()
+                let loco_addr = match chan {
+                    Left => {
+                        chan_left.speed = speed;
+                        chan_left.direction = direction;
+                        addr_left.value()
+                    }
+                    Right => {
+                        chan_right.speed = speed;
+                        chan_right.direction = direction;
+                        addr_right.value()
+                    }
                 };
 
                 //info!("tx, addr = {}", addr);
@@ -414,14 +439,12 @@ fn main() -> ! {
                     *TX_BUFFER.borrow(cs).borrow_mut() = Some((buffer, len))
                 });
 
-                channel_select ^= true;
-
                 debug!(
                     "Speed {}: {}, speed {}: {}, current: {}",
-                    addr_left.value(),
-                    speed1,
-                    addr_right.value(),
-                    speed2,
+                    chan_left.address,
+                    chan_left.speed,
+                    chan_right.address,
+                    chan_right.speed,
                     current
                 );
 
@@ -436,16 +459,16 @@ fn main() -> ! {
 
                 row2.reset();
                 {
-                    let a = if speed1 == 0 {
+                    let a = if chan_left.speed == 0 {
                         ' '
-                    } else if let Direction::Forward = dir1 {
+                    } else if let Direction::Forward = chan_left.direction {
                         '>'
                     } else {
                         '<'
                     };
-                    let b = if speed2 == 0 {
+                    let b = if chan_right.speed == 0 {
                         ' '
-                    } else if let Direction::Forward = dir2 {
+                    } else if let Direction::Forward = chan_right.direction {
                         '>'
                     } else {
                         '<'
@@ -453,6 +476,8 @@ fn main() -> ! {
                     write!(
                         &mut row2,
                         "{a}{speed1:02}{a}     {b}{speed2:02}{b}",
+                        speed1 = chan_left.speed,
+                        speed2 = chan_right.speed,
                     )
                 }
                 .unwrap();
@@ -478,7 +503,7 @@ fn main() -> ! {
                     info!("Program mode RIGHT");
                     RunState::Prog(Channel::Right)
                 } else {
-                    RunState::Run(chan)
+                    RunState::Run(chan.swap())
                 }
             }
             RunState::Prog(chan) => {
