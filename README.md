@@ -26,6 +26,18 @@ locomotive with the address set on the selected channel
 * Pure-Rust open source firmware based on dcc-rs
 * Open source hardware
 
+## Installation
+Ensure that the `thumbv7m-none-eabi` target and the `probe-run` tool have
+been installed and then `cargo run --release` will automatically flash the
+compiled firmware onto the device.
+
+```bash
+rustup target add thumbv7m-none-eabi
+cargo install probe-run
+cargo run --release
+DEFMT_LOG=off cargo run --release # Disable defmt logging
+```
+
 # License
 Source code for the software components is distributed under the terms
 of the Mozilla Public License Version 2.0.
