@@ -1,6 +1,5 @@
 (sym_lib_table
   (lib (name "stm32f103c6t6-blue-pill")(type "KiCad")(uri "${KIPRJMOD}/stm32f103c6t6-blue-pill.kicad_sym")(options "")(descr ""))
-  (lib (name "DRV8231DSGR")(type "KiCad")(uri "${KIPRJMOD}/DRV8231DSGR.kicad_sym")(options "")(descr ""))
   (lib (name "VXO7803-500")(type "KiCad")(uri "${KIPRJMOD}/VXO7803-500.kicad_sym")(options "")(descr ""))
   (lib (name "ssd1306-display")(type "KiCad")(uri "${KIPRJMOD}/ssd1306-display.kicad_sym")(options "")(descr ""))
 )
