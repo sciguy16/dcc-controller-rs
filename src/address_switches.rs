@@ -1,5 +1,10 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+
 use embedded_hal::digital::v2::InputPin;
 
+/// Convert a 7-bit dipswitch input to a u8 address value
 pub struct AddressSwitches<
     A: InputPin,
     B: InputPin,
@@ -63,7 +68,7 @@ impl<
                     | (f as u8) << 5
                     | (g as u8) << 6
             }
-            _ => panic!(""),
+            _ => panic!(),
         }
     }
 

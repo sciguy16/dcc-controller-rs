@@ -1,11 +1,6 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-
-//! blinky timer using interrupts on TIM2, adapted from blinky_timer_irq.rs example from
-//! stm32f1xx-hal
-//!
-//! This assumes that a LED is connected to pa5 (sck/d13) as is the case on most nucleo board.
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Pinout:
 // POT_LEFT: PB0
@@ -433,6 +428,14 @@ fn main() -> ! {
                     current
                 );
 
+                // Display is 128 x 64
+                // Font is 10x20
+                //
+                // 000  loco  000
+                //
+                // >05>      >04>
+                //
+
                 row1.reset();
                 write!(
                     &mut row1,
@@ -454,14 +457,6 @@ fn main() -> ! {
                     )
                 }
                 .unwrap();
-
-                // Display is 128 x 64
-                // Font is 10x20
-                //
-                // 000  loco  000
-                //
-                // 05 >      > 04
-                //
 
                 delay.delay_ms(10u16);
 
@@ -563,10 +558,8 @@ fn main() -> ! {
             }
         };
 
-        // Empty the display:
+        // Update display from the text buffers
         display.clear();
-
-        // Draw 2 lines of text:
         Text::with_baseline(
             row1.as_str(),
             Point::new(0, 25),
@@ -575,7 +568,6 @@ fn main() -> ! {
         )
         .draw(&mut display)
         .unwrap();
-
         Text::with_baseline(
             row2.as_str(),
             Point::new(0, 50),
@@ -584,7 +576,6 @@ fn main() -> ! {
         )
         .draw(&mut display)
         .unwrap();
-
         display.flush().unwrap();
     }
 }
