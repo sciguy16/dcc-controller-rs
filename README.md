@@ -1,6 +1,10 @@
 # dcc-controller-rs
 Open source lightweight DCC controller with firmware written in Rust
 
+Based on the STM32F103C8T6 "blue pill" board - specifically the C8 version
+rather than the C6 because the former has 64k of flash, and the graphics
+components push the binary size up to around 51k.
+
 ![DCC controller with an N gauge BR pannier tank](images/20220716_210946.jpg)
 
 ![Overview of DCC controller](images/20220716_210958.jpg)
@@ -28,4 +32,3 @@ of the Mozilla Public License Version 2.0.
 
 Design files for the hardware components are distributed under the terms
 of the CERN Open Hardware Licence Version 2 - Weakly Reciprocal.
-
